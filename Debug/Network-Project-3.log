@@ -1,3 +1,4 @@
 ﻿  server.cpp
-C:\Users\idokk\source\repos\Network-Project-3\Network-Project-3\server.cpp(56,1): warning C4326: return type of 'main' should be 'int' instead of 'void'
+  The contents of <filesystem> are available only with C++17 or later.
+C:\Users\idokk\source\repos\Network-Project-3\Network-Project-3\server.cpp(63,1): warning C4326: return type of 'main' should be 'int' instead of 'void'
   Network-Project-3.vcxproj -> C:\Users\idokk\source\repos\Network-Project-3\Debug\Network-Project-3.exe

@@ -9,22 +9,29 @@ using namespace std;
 #include <sstream>
 #include <chrono>
 #include <fstream>
+#include <filesystem>
 
 #define CODE_200 "HTTP/1.1 200 OK\n\r"
 #define CODE_404 "HTTP/1.1 404 Not Found\n\r"
+#define CODE_204 "HTTP/1.1 204 No Content\n\r"
+#define CODE_500 "HTTP/1.1 500 Internal Server Error\n\r"
 
 enum ClientRequest
 {
 	GET,
-	HEAD
+	HEAD,
+	TRACE,
+	OPTIONS,
+	_DELETE,
+	PUT
 };
 
 struct SocketState
 {
 	SOCKET id;
-	int	recv;			
-	int	send;			
-	int sendSubType;	
+	int	recv;
+	int	send;
+	int sendSubType;
 	char buffer[128];
 	int len;
 };
@@ -44,7 +51,7 @@ void removeSocket(int index);
 void acceptConnection(int index);
 void receiveMessage(int index);
 void sendMessage(int index);
-void addHeader(string& sendBuff, int length = 0);
+void addHeader(string& sendBuff, int length = 0, bool trace = false,bool options=false);
 int getContentFromFile(ifstream& file, string& sendBuff);
 void returnFileNameAfterQuery(string& name);
 
@@ -210,11 +217,11 @@ void receiveMessage(int index)
 	SOCKET msgSocket = sockets[index].id;
 
 	int len = sockets[index].len;
-	int bytesRecv = recv(msgSocket, &sockets[index].buffer[len], sizeof(sockets[index].buffer) - len, 0);
+	int bytesRecv = recv(msgSocket, &sockets[index].buffer[len], 4000, 0);
 
 	if (SOCKET_ERROR == bytesRecv)
 	{
-		cout << "Time Server: Error at recv(): " << WSAGetLastError() << endl; 
+		cout << "Time Server: Error at recv(): " << WSAGetLastError() << endl;
 		closesocket(msgSocket);
 		removeSocket(index);
 		return;
@@ -229,7 +236,7 @@ void receiveMessage(int index)
 	{
 		sockets[index].buffer[len + bytesRecv] = '\0'; //add the null-terminating to make it a string
 		cout << "Time Server: Recieved: " << bytesRecv << " bytes of \"" << &sockets[index].buffer[len] << "\" message.\n";
-		int requestLen;
+		int requestLen = 0;
 		sockets[index].len += bytesRecv;
 
 		if (sockets[index].len > 0)
@@ -237,21 +244,37 @@ void receiveMessage(int index)
 			if (strncmp(sockets[index].buffer, "GET", 3) == 0)
 			{
 				requestLen = strlen("GET /");
-				sockets[index].send = SEND;
 				sockets[index].sendSubType = GET;
-				memcpy(sockets[index].buffer, &sockets[index].buffer[requestLen], sockets[index].len - requestLen);
-				sockets[index].len -= requestLen;
-				return;
 			}
-			if (strncmp(sockets[index].buffer, "HEAD", 4) == 0)
+			else if (strncmp(sockets[index].buffer, "HEAD", 4) == 0)
 			{
 				requestLen = strlen("HEAD /");
-				sockets[index].send = SEND;
 				sockets[index].sendSubType = HEAD;
-				memcpy(sockets[index].buffer, &sockets[index].buffer[requestLen], sockets[index].len - requestLen);
-				sockets[index].len -= requestLen;
-				return;
 			}
+			else if (strncmp(sockets[index].buffer, "TRACE", 5) == 0)
+			{
+				requestLen = strlen("TRACE /");
+				sockets[index].sendSubType = TRACE;
+			}
+			else if (strncmp(sockets[index].buffer, "OPTIONS", 7) == 0)
+			{
+				requestLen = strlen("OPTIONS /");
+				sockets[index].sendSubType = OPTIONS;
+			}
+			else if (strncmp(sockets[index].buffer, "DELETE", 6) == 0)
+			{
+				requestLen = strlen("DELETE /");
+				sockets[index].sendSubType = _DELETE;
+			}
+			else if (strncmp(sockets[index].buffer, "PUT", 3) == 0)
+			{
+				requestLen = strlen("PUT /");
+				sockets[index].sendSubType = PUT;
+			}
+			sockets[index].send = SEND;
+			memcpy(sockets[index].buffer, &sockets[index].buffer[requestLen], sockets[index].len - requestLen);
+			sockets[index].len -= requestLen;
+			return;
 		}
 	}
 
@@ -260,7 +283,7 @@ void receiveMessage(int index)
 void sendMessage(int index)
 {
 	int bytesSent = 0;
-	string sendBuff="";
+	string sendBuff = "";
 	SOCKET msgSocket = sockets[index].id;
 	string requestContentFile = sockets[index].buffer;
 	requestContentFile = requestContentFile.substr(0, requestContentFile.find(" "));
@@ -268,24 +291,49 @@ void sendMessage(int index)
 	int length;
 	if (sockets[index].sendSubType == GET)
 	{
-		//returnFileNameAfterQuery(requestContentFile);
+		ifstream infile(requestContentFile);
+		sendBuff = "";
+		if (!infile) //file doesn't exists - 404
+		{
+			addHeader(sendBuff);
+			sendBuff.insert(0, CODE_404);
+		}
+		else
+		{
+			length = getContentFromFile(infile, sendBuff);
+			addHeader(sendBuff, length);
+			sendBuff.insert(0, CODE_200);
+		}
+	}
+	if (sockets[index].sendSubType == _DELETE)
+	{
+		sendBuff = "";
 		ifstream infile(requestContentFile);
 		if (!infile) //file doesn't exists - 404
 		{
 			addHeader(sendBuff);
 			sendBuff.insert(0, CODE_404);
 		}
-		else  //if file exists 
+		else
 		{
-			length=getContentFromFile(infile, sendBuff);
-			addHeader(sendBuff,length);
-			sendBuff.insert(0, CODE_200);
+			infile.close();
+			string statusCode = "";
+			if (remove(requestContentFile.c_str()) == 0) {
+				sendBuff += "File deleted";
+				statusCode = CODE_200;
+			}
+			else {
+				sendBuff += "Delete failed";
+				statusCode = CODE_500;
+			}
+			addHeader(sendBuff, sendBuff.length());
+			sendBuff.insert(0, statusCode);
 		}
 	}
 	else if (sockets[index].sendSubType == HEAD)
 	{
-		//returnFileNameAfterQuery(requestContentFile);
 		ifstream infile(requestContentFile);
+		sendBuff = "";
 		int length;
 		if (!infile) //file doesn't exists - 404
 		{
@@ -296,9 +344,29 @@ void sendMessage(int index)
 		{
 			length = getContentFromFile(infile, sendBuff);
 			sendBuff = ""; //getContentFromFile loads the infile into sendBuff, with HEAD request we don't want to transfer this data.
-			addHeader(sendBuff,length);
+			addHeader(sendBuff, length);
 			sendBuff.insert(0, CODE_200);
 		}
+	}
+	else if (sockets[index].sendSubType == TRACE)
+	{
+		sendBuff = sockets[index].buffer;
+		sendBuff.insert(0, "TRACE /");
+		addHeader(sendBuff, sendBuff.length(),true);
+		sendBuff.insert(0, CODE_200);
+	}
+	else if (sockets[index].sendSubType == OPTIONS)
+	{
+		sendBuff = "";
+		addHeader(sendBuff,0,false,true);
+		sendBuff.insert(0, CODE_204);
+	}
+	else if (sockets[index].sendSubType == PUT)
+	{
+		string content = sockets[index].buffer;
+		content = content.substr(content.find("\r\n\r\n") + strlen("\r\n\r\n"), content.find_last_of("\r\n\r\n") + 4);
+		addHeader(sendBuff,0,false,true);
+		sendBuff.insert(0, CODE_204);
 	}
 
 	bytesSent = send(msgSocket, sendBuff.c_str(), sendBuff.length(), 0);
@@ -313,30 +381,36 @@ void sendMessage(int index)
 	sockets[index].send = IDLE;
 }
 
-void addHeader(string& sendBuff,int length)
+void addHeader(string& sendBuff, int length, bool trace,bool options)
 {
+	string contentType = "text/html";
+	string allow = "";
+	if (trace)
+		contentType = "message/http";
+	if (options)
+		allow = "\r\nAllow: OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE";
 	time_t timer;
 	time(&timer);
 	string date = ctime(&timer);
 	//TODO 
 	//change order
-	/*: 1.Content-length 
+	/*: 1.Content-length
 	*	2.content-type
 	*	3.date
 	*	4.server
 	*/
 	string header =
 		"Date: " + date
-		+ "Server: Yuval and Ido server \r\n"
+		+ "Server: Yuval/Ido server \r\n"
 		+ "Content-Length: " + to_string(length) + "\r\n"
-		+ "Content-Type: text/html \r\n\n";
+		+ "Content-Type: " + contentType  + allow + "\r\n\n";
 	header += sendBuff;
 	sendBuff = header;
-	
+
 }
 
 
-int getContentFromFile(ifstream& infile,string& sendBuff)
+int getContentFromFile(ifstream& infile, string& sendBuff)
 {
 	string line;
 	while (!infile.eof())
