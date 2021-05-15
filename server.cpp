@@ -31,8 +31,8 @@ struct SocketState
 	SOCKET id;
 	int	recv;
 	int	send;
-	int sendSubType;
-	char buffer[128];
+	ClientRequest sendSubType;
+	char buffer[4096];
 	int len;
 };
 
@@ -217,7 +217,7 @@ void receiveMessage(int index)
 	SOCKET msgSocket = sockets[index].id;
 
 	int len = sockets[index].len;
-	int bytesRecv = recv(msgSocket, &sockets[index].buffer[len], 4000, 0);
+	int bytesRecv = recv(msgSocket, &sockets[index].buffer[len], sizeof(sockets[index].buffer) - len, 0);
 
 	if (SOCKET_ERROR == bytesRecv)
 	{
@@ -272,12 +272,11 @@ void receiveMessage(int index)
 				sockets[index].sendSubType = PUT;
 			}
 			sockets[index].send = SEND;
-			memcpy(sockets[index].buffer, &sockets[index].buffer[requestLen], sockets[index].len - requestLen);
+			memcpy(sockets[index].buffer, &sockets[index].buffer[requestLen], sockets[index].len);
 			sockets[index].len -= requestLen;
 			return;
 		}
 	}
-
 }
 
 void sendMessage(int index)
@@ -364,7 +363,7 @@ void sendMessage(int index)
 	else if (sockets[index].sendSubType == PUT)
 	{
 		string content = sockets[index].buffer;
-		content = content.substr(content.find("\r\n\r\n") + strlen("\r\n\r\n"), content.find_last_of("\r\n\r\n") + 4);
+		content = content.substr(content.find("\r\n\r\n") + strlen("\r\n\r\n"), content.find_last_of("\r\n\r\n") + strlen("\r\n\r\n"));
 		addHeader(sendBuff,0,false,true);
 		sendBuff.insert(0, CODE_204);
 	}
@@ -377,6 +376,11 @@ void sendMessage(int index)
 	}
 
 	cout << "Time Server: Sent: " << bytesSent << "\\" << sendBuff.length() << " bytes of \"" << sendBuff << "\" message.\n";
+	
+	//* Check
+	sockets[index].buffer[0] = '\0';
+	sockets[index].len = 0;
+	//*
 
 	sockets[index].send = IDLE;
 }
