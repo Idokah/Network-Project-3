@@ -1,4 +1,7 @@
 ﻿  server.cpp
   The contents of <filesystem> are available only with C++17 or later.
-C:\Users\idokk\source\repos\Network-Project-3\Network-Project-3\server.cpp(63,1): warning C4326: return type of 'main' should be 'int' instead of 'void'
+C:\Users\idokk\source\repos\Network-Project-3\Network-Project-3\server.cpp(19,1): warning C4005: 'EOF': macro redefinition
+C:\Program Files (x86)\Windows Kits\10\Include\10.0.18362.0\ucrt\stdio.h(37): message : see previous definition of 'EOF'
+C:\Users\idokk\source\repos\Network-Project-3\Network-Project-3\server.cpp(71,1): warning C4326: return type of 'main' should be 'int' instead of 'void'
+C:\Users\idokk\source\repos\Network-Project-3\Network-Project-3\server.cpp(138,18): warning C4244: 'initializing': conversion from 'time_t' to 'int', possible loss of data
   Network-Project-3.vcxproj -> C:\Users\idokk\source\repos\Network-Project-3\Debug\Network-Project-3.exe

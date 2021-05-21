@@ -12,9 +12,12 @@ using namespace std;
 #include <filesystem>
 
 #define CODE_200 "HTTP/1.1 200 OK\n\r"
+#define CODE_201 "HTTP/1.1 201 Created\n\r"
 #define CODE_404 "HTTP/1.1 404 Not Found\n\r"
 #define CODE_204 "HTTP/1.1 204 No Content\n\r"
 #define CODE_500 "HTTP/1.1 500 Internal Server Error\n\r"
+#define EOF "\n\n\r\n\r\n"
+#define TIMEOUT 120
 
 enum ClientRequest
 {
@@ -23,7 +26,8 @@ enum ClientRequest
 	TRACE,
 	OPTIONS,
 	_DELETE,
-	PUT
+	PUT,
+	POST
 };
 
 struct SocketState
@@ -34,9 +38,10 @@ struct SocketState
 	ClientRequest sendSubType;
 	char buffer[4096];
 	int len;
+	time_t time;
 };
 
-const int TIME_PORT = 27015;
+const int TIME_PORT = 8080;
 const int MAX_SOCKETS = 60;
 const int EMPTY = 0;
 const int LISTEN = 1;
@@ -51,9 +56,12 @@ void removeSocket(int index);
 void acceptConnection(int index);
 void receiveMessage(int index);
 void sendMessage(int index);
-void addHeader(string& sendBuff, int length = 0, bool trace = false,bool options=false);
+void addHeader(string& sendBuff, int length = 0, bool trace = false,bool options=false,string path="");
 int getContentFromFile(ifstream& file, string& sendBuff);
 void returnFileNameAfterQuery(string& name);
+void findStartOfBody(char* buff, int& startBody);
+int findEndMessage(char* buff);
+int extendEOF(char* buffer, int len, int bytesRecv);
 
 struct SocketState sockets[MAX_SOCKETS] = { 0 };
 int socketsCount = 0;
@@ -121,6 +129,22 @@ void main()
 			return;
 		}
 
+		for (int i = 0; i < MAX_SOCKETS; i++)
+		{
+			time_t currentTime;
+			if (sockets[i].send == IDLE && sockets[i].recv != LISTEN)
+			{
+				time(&currentTime);
+				int fromLast = currentTime - sockets[i].time;
+				if (fromLast > TIMEOUT)
+				{
+					closesocket(sockets[i].id);
+					removeSocket(i);
+					cout << "socket " << sockets[i].id << "disconnected - timeout" << endl << endl ;
+				}
+			}
+		}
+
 		for (int i = 0; i < MAX_SOCKETS && nfd > 0; i++)
 		{
 			if (FD_ISSET(sockets[i].id, &waitRecv))
@@ -175,8 +199,10 @@ bool addSocket(SOCKET id, int what)
 			sockets[i].id = id;
 			sockets[i].recv = what;
 			sockets[i].send = IDLE;
+			time(&sockets[i].time);
 			sockets[i].len = 0;
 			socketsCount++;
+			cout << "socket created : " << id << endl << endl << endl;
 			return (true);
 		}
 	}
@@ -271,12 +297,30 @@ void receiveMessage(int index)
 				requestLen = strlen("PUT /");
 				sockets[index].sendSubType = PUT;
 			}
+			else if (strncmp(sockets[index].buffer, "POST", 4) == 0)
+			{
+				requestLen = strlen("POST /");
+				sockets[index].sendSubType = POST;
+			}
+			sockets[index].len += extendEOF(sockets[index].buffer, len, bytesRecv);
+			time(&sockets[index].time);
 			sockets[index].send = SEND;
 			memcpy(sockets[index].buffer, &sockets[index].buffer[requestLen], sockets[index].len);
 			sockets[index].len -= requestLen;
 			return;
 		}
 	}
+}
+int extendEOF(char* buffer, int len, int bytesRecv)
+{
+	buffer[len + bytesRecv] = '\n';
+	buffer[len + bytesRecv + 1] = '\n';
+	buffer[len + bytesRecv + 2] = '\r';
+	buffer[len + bytesRecv + 3] = '\n';
+	buffer[len + bytesRecv + 4] = '\r';
+	buffer[len + bytesRecv + 5] = '\n';
+	buffer[len + bytesRecv + 6] = '\0';
+	return 6;
 }
 
 void sendMessage(int index)
@@ -287,7 +331,10 @@ void sendMessage(int index)
 	string requestContentFile = sockets[index].buffer;
 	requestContentFile = requestContentFile.substr(0, requestContentFile.find(" "));
 	returnFileNameAfterQuery(requestContentFile);
+	requestContentFile.insert(0, "C:\\temp\\");
 	int length;
+	int endMessage = 0;
+	endMessage = findEndMessage(sockets[index].buffer);
 	if (sockets[index].sendSubType == GET)
 	{
 		ifstream infile(requestContentFile);
@@ -363,9 +410,46 @@ void sendMessage(int index)
 	else if (sockets[index].sendSubType == PUT)
 	{
 		string content = sockets[index].buffer;
-		content = content.substr(content.find("\r\n\r\n") + strlen("\r\n\r\n"), content.find_last_of("\r\n\r\n") + strlen("\r\n\r\n"));
-		addHeader(sendBuff,0,false,true);
-		sendBuff.insert(0, CODE_204);
+		int startBody = 0;
+		findStartOfBody(sockets[index].buffer, startBody);
+		content = content.substr(startBody, endMessage - startBody - strlen(EOF));
+		addHeader(sendBuff, 0,false,false, requestContentFile);
+		ifstream infile(requestContentFile);
+		string statusCode = "";
+		if (!infile)
+			statusCode = CODE_201;
+		else
+		{
+			statusCode = CODE_200;
+			infile.close();
+		}
+		ofstream myfile(requestContentFile, ofstream::out);
+		myfile << content;
+		myfile.close();
+		sendBuff.insert(0, statusCode);
+	}
+	else if (sockets[index].sendSubType == POST)
+	{
+		string content = sockets[index].buffer;
+		int startBody = 0;
+		findStartOfBody(sockets[index].buffer,startBody);
+		content = content.substr(startBody,endMessage-startBody-strlen(EOF));
+		string adderPath = "/" + requestContentFile;
+		addHeader(sendBuff, 0,false,false,adderPath);
+		ifstream infile(requestContentFile);
+		string statusCode = "";
+		if (!infile)
+			statusCode = CODE_201;
+		else
+		{
+			statusCode = CODE_200;
+			infile.close();
+		}
+		cout <<endl<<"~~~~~POST CONTENT: "<< content <<"   ~~~~~"<< endl;
+		ofstream myfile(requestContentFile, ofstream::out | ofstream::app);
+		myfile << content;
+		myfile.close();
+		sendBuff.insert(0, statusCode);
 	}
 
 	bytesSent = send(msgSocket, sendBuff.c_str(), sendBuff.length(), 0);
@@ -377,22 +461,38 @@ void sendMessage(int index)
 
 	cout << "Time Server: Sent: " << bytesSent << "\\" << sendBuff.length() << " bytes of \"" << sendBuff << "\" message.\n";
 	
-	//* Check
-	sockets[index].buffer[0] = '\0';
-	sockets[index].len = 0;
-	//*
 
-	sockets[index].send = IDLE;
+
+	sockets[index].len -= endMessage;
+	if (sockets[index].len == 0) {
+		sockets[index].buffer[0] = '\0';
+		sockets[index].send = IDLE;
+	}
+	else {
+		memcpy(sockets[index].buffer, &sockets[index].buffer[endMessage], sockets[index].len);
+	}
 }
-
-void addHeader(string& sendBuff, int length, bool trace,bool options)
+void findStartOfBody(char* buff,int& startBody)
+{
+	string buffer = buff;
+	startBody = buffer.find("\r\n\r\n") + strlen("\r\n\r\n");
+}
+int findEndMessage(char* buff)
+{
+	string buffer = buff;
+	return (buffer.find(EOF) + strlen(EOF));
+}
+void addHeader(string& sendBuff, int length, bool trace,bool options,string path)
 {
 	string contentType = "text/html";
 	string allow = "";
+	string contentLocation = "";
 	if (trace)
 		contentType = "message/http";
 	if (options)
 		allow = "\r\nAllow: OPTIONS, GET, HEAD, POST, PUT, DELETE, TRACE";
+	if (path != "") 
+		path.insert(0, "\r\nContent - Location: ");
 	time_t timer;
 	time(&timer);
 	string date = ctime(&timer);
@@ -407,7 +507,7 @@ void addHeader(string& sendBuff, int length, bool trace,bool options)
 		"Date: " + date
 		+ "Server: Yuval/Ido server \r\n"
 		+ "Content-Length: " + to_string(length) + "\r\n"
-		+ "Content-Type: " + contentType  + allow + "\r\n\n";
+		+ "Content-Type: " + contentType  + allow + path + "\r\n\n";
 	header += sendBuff;
 	sendBuff = header;
 
