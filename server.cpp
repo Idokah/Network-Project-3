@@ -11,11 +11,11 @@ using namespace std;
 #include <fstream>
 #include <filesystem>
 
-#define CODE_200 "HTTP/1.1 200 OK\n\r"
-#define CODE_201 "HTTP/1.1 201 Created\n\r"
-#define CODE_404 "HTTP/1.1 404 Not Found\n\r"
-#define CODE_204 "HTTP/1.1 204 No Content\n\r"
-#define CODE_500 "HTTP/1.1 500 Internal Server Error\n\r"
+#define CODE_200 "HTTP/1.1 200 OK\n"
+#define CODE_201 "HTTP/1.1 201 Created\n"
+#define CODE_404 "HTTP/1.1 404 Not Found\n"
+#define CODE_204 "HTTP/1.1 204 No Content\n"
+#define CODE_500 "HTTP/1.1 500 Internal Server Error\n"
 #define EOF "\n\n\r\n\r\n"
 #define TIMEOUT 120
 
@@ -132,15 +132,21 @@ void main()
 		for (int i = 0; i < MAX_SOCKETS; i++)
 		{
 			time_t currentTime;
+			char printTime[6];
 			if (sockets[i].send == IDLE && sockets[i].recv != LISTEN)
 			{
 				time(&currentTime);
 				int fromLast = currentTime - sockets[i].time;
 				if (fromLast > TIMEOUT)
 				{
+					time_t disconnectTime = sockets[i].time + TIMEOUT;
+					struct tm* tm = localtime(&disconnectTime);
 					closesocket(sockets[i].id);
 					removeSocket(i);
-					cout << "socket " << sockets[i].id << "disconnected - timeout" << endl << endl ;
+					cout << "socket " << sockets[i].id << " disconnected - timeout ";
+					strftime(printTime, 6, "%R", tm);
+					cout <<"at ("<< printTime<<")\n\n";
+
 				}
 			}
 		}
@@ -445,12 +451,13 @@ void sendMessage(int index)
 			statusCode = CODE_200;
 			infile.close();
 		}
-		cout <<endl<<"~~~~~POST CONTENT: "<< content <<"   ~~~~~"<< endl;
+		cout <<endl<<"~~~~~~~~~~~~~~~~ POST CONTENT:  ~~~~~~~~~~~~~~~~ \n"<< content <<"\n ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"<< endl;
 		ofstream myfile(requestContentFile, ofstream::out | ofstream::app);
 		myfile << content;
 		myfile.close();
 		sendBuff.insert(0, statusCode);
 	}
+
 
 	bytesSent = send(msgSocket, sendBuff.c_str(), sendBuff.length(), 0);
 	if (SOCKET_ERROR == bytesSent)
